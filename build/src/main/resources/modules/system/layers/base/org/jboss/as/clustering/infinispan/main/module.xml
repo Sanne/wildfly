@@ -39,6 +39,7 @@
         <module name="javax.api"/>
         <module name="javax.transaction.api"/>
         <module name="net.jcip"/>
+        <module name="org.apache.commons.codec"/>
         <module name="org.infinispan" services="import"/>
         <module name="org.infinispan.cachestore.jdbc"/>
         <module name="org.infinispan.cachestore.remote"/>

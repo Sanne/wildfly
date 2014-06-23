@@ -46,7 +46,6 @@ import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.configuration.cache.PersistenceConfigurationBuilder;
-import org.infinispan.configuration.cache.SingleFileStoreConfigurationBuilder;
 import org.infinispan.configuration.cache.StoreConfigurationBuilder;
 import org.infinispan.configuration.cache.VersioningScheme;
 import org.infinispan.configuration.parsing.ConfigurationBuilderHolder;
@@ -65,6 +64,7 @@ import org.infinispan.transaction.tm.BatchModeTransactionManager;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.jboss.as.clustering.infinispan.CacheContainer;
 import org.jboss.as.clustering.infinispan.InfinispanLogger;
+import org.jboss.as.clustering.infinispan.persistence.file.FileStoreConfigurationBuilder;
 import org.jboss.as.clustering.msc.AsynchronousService;
 import org.jboss.as.clustering.naming.BinderServiceBuilder;
 import org.jboss.as.clustering.naming.JndiNameFactory;
@@ -572,8 +572,8 @@ public abstract class CacheAddHandler extends AbstractAddStepHandler {
 
         ModelNode resolvedValue = null;
         if (storeKey.equals(ModelKeys.FILE_STORE)) {
-            final SingleFileStoreConfigurationBuilder builder = persistenceBuilder.addSingleFileStore();
-
+            final FileStoreConfigurationBuilder builder = new FileStoreConfigurationBuilder(persistenceBuilder);
+            persistenceBuilder.addStore(builder);
             final String path = ((resolvedValue = FileStoreResourceDefinition.RELATIVE_PATH.resolveModelAttribute(context, store)).isDefined()) ? resolvedValue.asString() : InfinispanExtension.SUBSYSTEM_NAME + File.separatorChar + containerName;
             final String relativeTo = ((resolvedValue = FileStoreResourceDefinition.RELATIVE_TO.resolveModelAttribute(context, store)).isDefined()) ? resolvedValue.asString() : ServerEnvironment.SERVER_DATA_DIR;
             Injector<PathManager> injector = new Injector<PathManager>() {

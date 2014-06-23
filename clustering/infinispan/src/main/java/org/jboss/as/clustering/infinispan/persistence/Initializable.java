@@ -19,20 +19,18 @@
  * Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
  * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
  */
-package org.jboss.as.clustering.infinispan;
+package org.jboss.as.clustering.infinispan.persistence;
 
-import org.infinispan.manager.EmbeddedCacheManager;
-import org.wildfly.clustering.spi.CacheServiceNameFactory;
+import org.infinispan.persistence.spi.InitializationContext;
 
-public interface CacheContainer extends EmbeddedCacheManager {
+/**
+ * Used to add initialization hooks to a cache store dependency.
+ * @author Paul Ferraro
+ */
+public interface Initializable {
     /**
-     * Cache name alias for the default cache of a cache container.
+     * Initializes this object using the initialization context of the cache store.
+     * @param context an initialization context
      */
-    String DEFAULT_CACHE_ALIAS = CacheServiceNameFactory.DEFAULT_CACHE;
-
-    /**
-     * Returns the name of the default cache.
-     * @return a cache name
-     */
-    String getDefaultCacheName();
+    void init(InitializationContext context);
 }

@@ -19,20 +19,24 @@
  * Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
  * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
  */
-package org.jboss.as.clustering.infinispan;
+package org.jboss.as.clustering.infinispan.persistence;
 
-import org.infinispan.manager.EmbeddedCacheManager;
-import org.wildfly.clustering.spi.CacheServiceNameFactory;
-
-public interface CacheContainer extends EmbeddedCacheManager {
+/**
+ * Provides encoding/decoding of binary data to/from a string
+ * @author Paul Ferraro
+ */
+public interface Codec {
     /**
-     * Cache name alias for the default cache of a cache container.
+     * Encodes the specified bytes to a string.
+     * @param bytes binary data
+     * @return an endoded string
      */
-    String DEFAULT_CACHE_ALIAS = CacheServiceNameFactory.DEFAULT_CACHE;
+    String encode(byte[] bytes);
 
     /**
-     * Returns the name of the default cache.
-     * @return a cache name
+     * Decodes the specified encoded string into its binary form
+     * @param value an encoded string
+     * @return the decoded binary data
      */
-    String getDefaultCacheName();
+    byte[] decode(String value);
 }
