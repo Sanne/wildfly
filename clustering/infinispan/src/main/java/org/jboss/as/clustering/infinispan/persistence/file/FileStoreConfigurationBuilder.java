@@ -31,7 +31,6 @@ public class FileStoreConfigurationBuilder extends AbstractStoreConfigurationBui
 
     private String location = "Infinispan-FileStore";
     private TwoWayKey2StringMapper mapper = new CodecKeyMapper<>(Codecs.BASE32);
-    private int maxFileNameLength = Byte.MAX_VALUE - Byte.MIN_VALUE;
 
     public FileStoreConfigurationBuilder(PersistenceConfigurationBuilder builder) {
         super(builder);
@@ -48,13 +47,12 @@ public class FileStoreConfigurationBuilder extends AbstractStoreConfigurationBui
     }
 
     public FileStoreConfigurationBuilder maxFileNameLength(int maxFileNameLength) {
-        this.maxFileNameLength = maxFileNameLength;
         return this;
     }
 
     @Override
     public FileStoreConfiguration create() {
-        return new FileStoreConfiguration(this.location, this.mapper, this.maxFileNameLength, this.purgeOnStartup, this.fetchPersistentState, this.ignoreModifications, this.async.create(), this.singletonStore.create(), this.preload, this.shared, this.properties);
+        return new FileStoreConfiguration(this.location, this.mapper, this.purgeOnStartup, this.fetchPersistentState, this.ignoreModifications, this.async.create(), this.singletonStore.create(), this.preload, this.shared, this.properties);
     }
 
     @Override

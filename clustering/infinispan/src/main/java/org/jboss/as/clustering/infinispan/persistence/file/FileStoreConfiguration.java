@@ -36,13 +36,11 @@ public class FileStoreConfiguration extends AbstractStoreConfiguration {
 
     private final String location;
     private final TwoWayKey2StringMapper mapper;
-    private final int maxFileNameLength;
 
-    public FileStoreConfiguration(String location, TwoWayKey2StringMapper mapper, int maxFileNameLength, boolean purgeOnStartup, boolean fetchPersistentState, boolean ignoreModifications, AsyncStoreConfiguration async, SingletonStoreConfiguration singletonStore, boolean preload, boolean shared, Properties properties) {
+    public FileStoreConfiguration(String location, TwoWayKey2StringMapper mapper, boolean purgeOnStartup, boolean fetchPersistentState, boolean ignoreModifications, AsyncStoreConfiguration async, SingletonStoreConfiguration singletonStore, boolean preload, boolean shared, Properties properties) {
         super(purgeOnStartup, fetchPersistentState, ignoreModifications, async, singletonStore, preload, shared, properties);
         this.location = location;
         this.mapper = mapper;
-        this.maxFileNameLength = maxFileNameLength;
     }
 
     public String location() {
@@ -53,7 +51,4 @@ public class FileStoreConfiguration extends AbstractStoreConfiguration {
         return this.mapper;
     }
 
-    public int maxFileNameLength() {
-        return this.maxFileNameLength;
-    }
 }

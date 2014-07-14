@@ -21,31 +21,24 @@
  */
 package org.jboss.as.clustering.infinispan.persistence.file;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.IOException;
-import java.nio.file.DirectoryStream;
-import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardOpenOption;
-import java.util.concurrent.CompletionService;
 import java.util.concurrent.Executor;
 
 import org.infinispan.commons.configuration.ConfiguredBy;
-import org.infinispan.commons.io.ByteBuffer;
 import org.infinispan.commons.io.ByteBufferFactory;
 import org.infinispan.executors.ExecutorAllCompletionService;
 import org.infinispan.filter.KeyFilter;
 import org.infinispan.marshall.core.MarshalledEntry;
 import org.infinispan.marshall.core.MarshalledEntryFactory;
-import org.infinispan.metadata.InternalMetadata;
 import org.infinispan.persistence.TaskContextImpl;
 import org.infinispan.persistence.keymappers.TwoWayKey2StringMapper;
 import org.infinispan.persistence.spi.AdvancedLoadWriteStore;
 import org.infinispan.persistence.spi.InitializationContext;
 import org.infinispan.persistence.spi.PersistenceException;
+import org.infinispan.util.TimeService;
 import org.jboss.as.clustering.infinispan.persistence.Initializable;
 
 /**
@@ -75,6 +68,7 @@ import org.jboss.as.clustering.infinispan.persistence.Initializable;
  * are more performant than the bucket-based implementation, since these operations do not require reading and deserialization of file contents.
  *
  * @author Paul Ferraro
+ * @author Sanne Grinovero
  * @param <K> cache key type
  * @param <V> cache value type
  */
@@ -82,19 +76,21 @@ import org.jboss.as.clustering.infinispan.persistence.Initializable;
 public class FileStore<K, V> implements AdvancedLoadWriteStore<K, V> {
 
     private Path parent;
-    private int maxFileNameLength;
     private MarshalledEntryFactory<K, V> entryFactory;
     private ByteBufferFactory bufferFactory;
     private TwoWayKey2StringMapper mapper;
+    private IndexBasedStorage<K, V> storage;
+    private TimeService timeService;
 
     @Override
     public void init(InitializationContext context) {
         FileStoreConfiguration config = context.getConfiguration();
+        timeService = context.getTimeService();
         this.parent = Paths.get(config.location(), context.getCache().getName());
-        this.maxFileNameLength = config.maxFileNameLength();
         this.entryFactory = context.getMarshalledEntryFactory();
         this.bufferFactory = context.getByteBufferFactory();
         this.mapper = config.mapper();
+        this.storage = new IndexBasedStorage(entryFactory, bufferFactory, mapper);
         if (this.mapper instanceof Initializable) {
             ((Initializable) this.mapper).init(context);
         }
@@ -103,7 +99,8 @@ public class FileStore<K, V> implements AdvancedLoadWriteStore<K, V> {
     @Override
     public void start() {
         try {
-            Files.createDirectories(this.parent);
+            Path createdDirectory = Files.createDirectories(this.parent);
+            storage.start(createdDirectory);
         } catch (IOException e) {
             throw new PersistenceException(e);
         }
@@ -111,39 +108,36 @@ public class FileStore<K, V> implements AdvancedLoadWriteStore<K, V> {
 
     @Override
     public void stop() {
+        try {
+            storage.stop();
+        } catch (IOException e) {
+            throw new PersistenceException(e);
+        }
     }
 
     @Override
     public MarshalledEntry<K, V> load(Object key) {
-        Path path = this.path(key);
-        return Files.exists(path) ? this.read(key, path) : null;
+        String name = this.path(key);
+        try {
+            return storage.load(key, name);
+        } catch (IOException e) {
+            throw new PersistenceException(e);
+        }
     }
 
     @Override
     public boolean contains(Object key) {
-        return Files.exists(this.path(key));
+        try {
+            return storage.contains(this.path(key));
+        } catch (IOException e) {
+            throw new PersistenceException(e);
+        }
     }
 
     @Override
     public void write(MarshalledEntry<? extends K, ? extends V> entry) {
-        Path path = this.path(entry.getKey());
-        try (DataOutputStream output = new DataOutputStream(Files.newOutputStream(path, StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.SYNC))) {
-            ByteBuffer value = entry.getValueBytes();
-            ByteBuffer metaData = entry.getMetadataBytes();
-
-            int valueLength = (value != null) ? value.getLength() : 0;
-            int metaDataLength = (metaData != null) ? metaData.getLength() : 0;
-
-            output.writeInt(valueLength);
-            output.writeInt(metaDataLength);
-
-            if (valueLength > 0) {
-                output.write(value.getBuf(), value.getOffset(), value.getLength());
-            }
-            if (metaDataLength > 0) {
-                output.write(metaData.getBuf(), metaData.getOffset(), metaData.getLength());
-            }
-            output.flush();
+        try {
+            storage.write(entry.getKey(), entry.getValueBytes(), entry.getMetadata(), entry.getMetadataBytes());
         } catch (IOException e) {
             throw new PersistenceException(e);
         }
@@ -151,8 +145,13 @@ public class FileStore<K, V> implements AdvancedLoadWriteStore<K, V> {
 
     @Override
     public boolean delete(Object key) {
+        final String name = this.path(key);
         try {
-            return Files.deleteIfExists(this.path(key));
+            boolean returnValue = storage.contains(name);
+            storage.delete(name);
+            //Do we need a reliable return value?
+            //I suspect we could skip the contains operation.
+            return returnValue;
         } catch (IOException e) {
             throw new PersistenceException(e);
         }
@@ -162,111 +161,45 @@ public class FileStore<K, V> implements AdvancedLoadWriteStore<K, V> {
     public void process(final KeyFilter<? super K> filter, final CacheLoaderTask<? super K, ? super V> processor, Executor executor, boolean fetchValue, boolean fetchMetaData) {
         TaskContext context = new TaskContextImpl();
         ExecutorAllCompletionService service = new ExecutorAllCompletionService(executor);
-        this.process(this.parent, filter, processor, context, service, !fetchValue && !fetchMetaData);
+        final long now = timeService.wallClockTime();
+        try {
+            storage.process(filter, processor, context, service, !fetchValue && !fetchMetaData, now);
+        } catch (IOException e) {
+            throw new PersistenceException(e);
+        }
         service.waitUntilAllCompleted();
         if (service.isExceptionThrown()) {
             throw new PersistenceException(service.getFirstException());
         }
     }
 
-    private <SK, SV> void process(Path parent, KeyFilter<? super K> filter, final CacheLoaderTask<? super K, ? super V> processor, final TaskContext context, CompletionService<Void> service, final boolean keyOnly) {
-        try (DirectoryStream<Path> directory = Files.newDirectoryStream(parent)) {
-            for (final Path path: directory) {
-                if (context.isStopped()) return;
-                if (Files.isDirectory(path)) {
-                    this.process(path, filter, processor, context, service, keyOnly);
-                } else {
-                    final K key = FileStore.this.key(path);
-                    if (filter.accept(key)) {
-                        Runnable task = new Runnable() {
-                            @SuppressWarnings("unchecked")
-                            @Override
-                            public void run() {
-                                // The Infinispan API is a little screwy here, so we need to resort to type erasure so the MarshalledEntry is compatible with the CacheLoaderTask
-//                              MarshalledEntry<K, V> entry = keyOnly ? FileStore.this.entry(key) : FileStore.this.read(key, path);
-                                @SuppressWarnings("rawtypes")
-                                MarshalledEntry entry = keyOnly ? FileStore.this.entry(key) : FileStore.this.read(key, path);
-                                try {
-                                    processor.processEntry(entry, context);
-                                } catch (InterruptedException e) {
-                                    Thread.currentThread().interrupt();
-                                }
-                            }
-                        };
-                        service.submit(task, null);
-                    }
-                }
-            }
-        } catch (IOException e) {
-            throw new PersistenceException(e);
-        }
-    }
-
     @Override
     public int size() {
         try {
-            return this.count(this.parent);
+            return storage.count();
         } catch (IOException e) {
             throw new PersistenceException(e);
-        }
-    }
-
-    private int count(Path parent) throws IOException {
-        try (DirectoryStream<Path> directory = Files.newDirectoryStream(parent)) {
-            int count = 0;
-            for (Path path: directory) {
-                count += Files.isDirectory(path) ? count(path) : 1;
-            }
-            return count;
         }
     }
 
     @Override
     public void clear() {
         try {
-            this.clear(this.parent);
+            storage.removeAll();
         } catch (IOException e) {
             throw new PersistenceException(e);
         }
     }
 
-    private void clear(Path parent) throws IOException {
-        try (DirectoryStream<Path> directory = Files.newDirectoryStream(parent)) {
-            for (Path path: directory) {
-                if (Files.isDirectory(path)) {
-                    this.clear(path);
-                }
-                Files.delete(path);
-            }
-        }
-    }
-
     @Override
     public void purge(Executor threadPool, final PurgeListener<? super K> listener) {
-        final Path parent = this.parent;
-        final long now = System.currentTimeMillis();
-        Runnable task = new Runnable() {
+        final IndexBasedStorage<K,V> storage = this.storage;
+        final long now = timeService.wallClockTime();
+        final Runnable task = new Runnable() {
             @Override
             public void run() {
-                this.purge(parent);
-            }
-
-            private void purge(Path parent) {
-                try (DirectoryStream<Path> directory = Files.newDirectoryStream(parent)) {
-                    for (Path path: directory) {
-                        if (Thread.currentThread().isInterrupted()) return;
-                        if (Files.isDirectory(path)) {
-                            this.purge(path);
-                        } else {
-                            K key = FileStore.this.key(path);
-                            MarshalledEntry<K, V> entry = FileStore.this.read(key, path);
-                            InternalMetadata metaData = entry.getMetadata();
-                            if ((metaData != null) && metaData.isExpired(now)) {
-                                Files.delete(path);
-                                listener.entryPurged(key);
-                            }
-                        }
-                    }
+                try {
+                    storage.purgeAll(now, listener);
                 } catch (IOException e) {
                     throw new PersistenceException(e);
                 }
@@ -276,83 +209,19 @@ public class FileStore<K, V> implements AdvancedLoadWriteStore<K, V> {
     }
 
     /*
-     * Creates a path from a key.
-     * File names are generated from cache keys via URL-friendly base-64 encoding of their externalized form.
+     * Creates a String version of the key.
+     * Names are generated from cache keys via URL-friendly base-64 encoding of their externalized form.
      */
-    private Path path(Object key) {
-        String encoded = this.mapper.getStringMapping(key);
-        return this.format(encoded);
-    }
-
-    /*
-     * Formats the specified value into a path, using sub-directories if necessary.
-     */
-    private Path format(String value) {
-        int size = value.length();
-        if (size <= this.maxFileNameLength) {
-            return this.parent.resolve(value);
-        }
-        int directories = (size / this.maxFileNameLength) - (((size % this.maxFileNameLength) == 0) ? 1 : 0);
-        Path directory = this.parent;
-        for (int i = 0; i < directories; ++i) {
-            directory = directory.resolve(value.substring(i * this.maxFileNameLength, (i + 1) * this.maxFileNameLength));
-            try {
-                Files.createDirectory(directory);
-            } catch (FileAlreadyExistsException e) {
-                // Ignore
-            } catch (IOException e) {
-                throw new PersistenceException(e);
-            }
-        }
-        return directory.resolve(value.substring(directories * this.maxFileNameLength));
+    private String path(final Object key) {
+        return this.mapper.getStringMapping(key);
     }
 
     /*
      * Extracts the key from a path.
      */
     @SuppressWarnings("unchecked")
-    K key(Path path) {
-        String encoded = this.parse(path);
+    K key(final String encoded) {
         return (K) this.mapper.getKeyMapping(encoded);
     }
 
-    /*
-     * Parses the specified path, potentially containing sub-directories.
-     */
-    private String parse(Path path) {
-        Path relative = this.parent.relativize(path);
-        String fileName = relative.getFileName().toString();
-        int directories = relative.getNameCount() - 1;
-        if (directories == 0) {
-            return fileName;
-        }
-        StringBuilder builder = new StringBuilder((directories * this.maxFileNameLength) + fileName.length());
-        for (Path name: relative) {
-            builder.append(name);
-        }
-        return builder.toString();
-    }
-
-    /*
-     * Reads the content of the specified file that corresponds to the specified key
-     */
-    MarshalledEntry<K, V> read(Object key, Path path) {
-        try (DataInputStream input = new DataInputStream(Files.newInputStream(path, StandardOpenOption.READ))) {
-            int valueLength = input.readInt();
-            int metaDataLength = input.readInt();
-
-            byte[] bytes = new byte[valueLength + metaDataLength];
-            input.readFully(bytes);
-
-            ByteBuffer valueBuffer = (valueLength > 0) ? FileStore.this.bufferFactory.newByteBuffer(bytes, 0, valueLength) : null;
-            ByteBuffer metaDataBuffer = (metaDataLength > 0) ? FileStore.this.bufferFactory.newByteBuffer(bytes, valueLength, metaDataLength) : null;
-            return FileStore.this.entryFactory.newMarshalledEntry(key, valueBuffer, metaDataBuffer);
-        } catch (IOException e) {
-            throw new PersistenceException(e);
-        }
-    }
-
-    MarshalledEntry<K, V> entry(K key) {
-        return this.entryFactory.newMarshalledEntry(key, (ByteBuffer) null, (ByteBuffer) null);
-    }
 }
