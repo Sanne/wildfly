@@ -300,7 +300,7 @@
         <version.org.hibernate.search5_10>5.10.0.Final</version.org.hibernate.search5_10>
         <version.org.hibernate.validator>6.0.10.Final</version.org.hibernate.validator>
         <version.org.hibernate.validator.ee7>5.3.6.Final</version.org.hibernate.validator.ee7>
-        <!-- Hardcoded in module.xml for the dual EE7 and EE8 support -->
+        <!-- Legacy for EE7, yet not needing to be hardcoded hardcoded as the EE8 version has a different groupId -->
         <version.org.hibernate.javax.persistence.hibernate-jpa-2.1-api>1.0.2.Final</version.org.hibernate.javax.persistence.hibernate-jpa-2.1-api>
         <version.org.hornetq>2.4.7.Final</version.org.hornetq>
         <version.org.infinispan>9.2.3.Final</version.org.infinispan>
@@ -1421,10 +1421,18 @@
                 <version>${version.javax.jws.jsr181-api}</version>
             </dependency>
 
+            <!-- JPA for EE8 -->
             <dependency>
                 <groupId>javax.persistence</groupId>
                 <artifactId>javax.persistence-api</artifactId>
                 <version>${version.javax.persistence}</version>
+            </dependency>
+
+            <!-- JPA for EE7 (legacy) -->
+            <dependency>
+                <groupId>org.hibernate.javax.persistence</groupId>
+                <artifactId>hibernate-jpa-2.1-api</artifactId>
+                <version>${version.org.hibernate.javax.persistence.hibernate-jpa-2.1-api}</version>
             </dependency>
 
             <dependency>
